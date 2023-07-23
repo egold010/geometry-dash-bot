@@ -10,11 +10,15 @@ RENDER_MODE = "human"
 SIZE = pyautogui.size()
 GRID_SIZE = SIZE[1] * .05
 
+OBSERVATION_CELL_SIZE = 10
+OBSERVATION_DIMENSION = (round(SIZE[0]/OBSERVATION_CELL_SIZE), round(SIZE[1]/OBSERVATION_CELL_SIZE))
+
 PLAYER_GRID_POS = (4, 13)
 PLAYER_POS = (PLAYER_GRID_POS[0] * GRID_SIZE, PLAYER_GRID_POS[1] * GRID_SIZE)
 PLAYER_COLOR = (255, 255, 255)
 
 obstacles = [
+    "Player",
     "Ground",
     "Spike"
 ]
@@ -35,6 +39,14 @@ class Obstacle:
                 geometry[2]
             ]
 
+    def draw(self, canvas):
+        if self.type == "Ground":
+            rect = self.geometry.get_rect()
+            rect.center = self.hitbox.center
+            canvas.blit(self.geometry, rect)
+        elif self.type == "Hazard":
+            pygame.draw.polygon(canvas, self.color, self.geometry)
+
 class GeometryDashEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 60}
     activeTerrain = []
@@ -43,57 +55,64 @@ class GeometryDashEnv(gym.Env):
         self.window_size = size
         self.window = None
         self.clock = None
+        self.do_render = False
         
         self.action_space = gym.spaces.Discrete(2)
-        self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(32, 20))
-
-        """temporary initial observation
-        later replace with initial state of the level"""
-        self.grid = np.zeros((32, 20))
-
-        if self.window is None:
-            pygame.init()
-            pygame.display.init()
-            self.window = pygame.display.set_mode(SIZE)
+        self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(OBSERVATION_DIMENSION[0] * OBSERVATION_DIMENSION[1],))
 
         self.reset()
 
     def step(self, action):
         if action:
             self.player.jump()
-        fail = self.render()
+        
+        self.setMap()
+        self.player.update(self.activeTerrain)
+        fail = not self.player.alive
+
+        if self.do_render:
+            self.render()
+
         reward = -100 if fail else 1
-        return self.grid, reward, fail, {}
+        if self.player.on_ground:
+            reward += 100
+        return self.getGrid(), reward, fail, False, {}
 
     def render(self) -> None:
+        if self.window is None:
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode(SIZE)
+
         canvas = pygame.Surface((self.window_size[0], self.window_size[1]))
         canvas.fill((0,0,0))
         self.offset += self.player.x_velocity
 
         self.drawMap(canvas)
-        self.player.update(self.activeTerrain)
         self.player.render(canvas)
 
         self.window.blit(canvas, canvas.get_rect())
         pygame.event.pump()
         pygame.display.update()
         self.clock.tick(self.metadata["render_fps"])
-
-        return not self.player.alive
     
-    def reset(self):
+    def reset(self, seed = None, options = {"Render": False}):
+        self.do_render = options["Render"]
+
+        if hasattr(self, "player"):
+            del self.player
         self.player = PlayerCube()
         self.offset = 0
         self.clock = pygame.time.Clock()
 
-        return self.grid, {}
+        return self.getGrid(), {}
 
     def close(self) -> None:
         pygame.quit()
 
     #helpers
 
-    def drawMap(self, window) -> None:
+    def setMap(self) -> None:
         self.activeTerrain = []
         for y, row in enumerate(levels[0]):
             for x, cell in enumerate(row):
@@ -101,13 +120,33 @@ class GeometryDashEnv(gym.Env):
                 ny = y * GRID_SIZE
                 obstacle = None
                 if cell == 1:
-                    obstacle = Utilities.drawCube((nx,ny), GRID_SIZE, (100,100,100), 0, window)
+                    obstacle = Utilities.getCube((nx,ny), GRID_SIZE, (100,100,100), 0)
                 elif cell == 2:
-                    obstacle = Utilities.drawSpike((nx,ny), GRID_SIZE, (100,50,50), window)
+                    obstacle = Utilities.getSpike((nx,ny), GRID_SIZE, (100,50,50))
                 if obstacle is not None:
                     self.activeTerrain.append(obstacle)
-                
 
+    def drawMap(self, window) -> None:
+        for obstacle in self.activeTerrain:
+            obstacle.draw(window)
+                
+    def getGrid(self):
+        f = OBSERVATION_CELL_SIZE
+        grid = np.zeros((round(SIZE[0]/f), round(SIZE[1]/f)))
+        for obstacle in self.activeTerrain:
+            if obstacle.type == "Ground":
+                if round(obstacle.hitbox.left/f) < 0 or round(obstacle.hitbox.right/f) >= round(SIZE[0]/f) or round(obstacle.hitbox.top/f) < 0 or round(obstacle.hitbox.bottom/f) >= round(SIZE[1]/f):
+                    continue
+                grid[round(obstacle.hitbox.left/f):round(obstacle.hitbox.right/f), round(obstacle.hitbox.top/f):round(obstacle.hitbox.bottom/f)] = 1
+            elif obstacle.type == "Hazard":
+                for hb in obstacle.hitbox:
+                    if round(hb[0]/f) < 0 or round(hb[0]/f) >= round(SIZE[0]/f) or round(hb[1]/f) < 0 or round(hb[1]/f) >= round(SIZE[1]/f):
+                        continue
+                    grid[round(hb[0]/f), round(hb[1]/f)] = 2
+        
+        grid[round(self.player.X/f), round(self.player.Y/f)] = 3
+        
+        return np.array(grid, dtype=np.float32).flatten()
 
 class PlayerCube:
     def __init__(self, pos = PLAYER_POS, size = GRID_SIZE, rotation = 0):
@@ -146,6 +185,7 @@ class PlayerCube:
             self.y_velocity += self.gravity
             self.Y += self.y_velocity
             self.rotation += 3
+        print(self.Y)
 
         self.on_ground = False
         for obstacle in terrain:
@@ -162,31 +202,25 @@ class PlayerCube:
                     if r1.collidepoint(hb):
                         self.alive = False
                         self.x_velocity = 0
-                        pyautogui.sleep(3)
                         break
+        print(self.Y)
 
 class Utilities:
     @staticmethod
-    def drawCube(center, size, color, rotation, window):
+    def getCube(center, size, color, rotation):
         square = pygame.Surface((size, size))
         square.fill(color)
         square = pygame.transform.rotate(square, rotation)
         obstacle = Obstacle("Ground", "Ground", square, center)
-        rect = square.get_rect()
-        rect.center = center
-        if rotation == 0:
-            window.blit(square, rect)
-        else:
-            pass
         return obstacle
 
     @staticmethod
-    def drawSpike(center, size, color, window) -> None:
+    def getSpike(center, size, color) -> None:
         p1 = (center[0] - size / 2, center[1] + size / 2)
         p2 = (center[0] + size / 2, center[1] + size / 2)
         p3 = (center[0], center[1] - size / 2)
-        pygame.draw.polygon(window, color, [p1, p2, p3])
         obstacle = Obstacle("Spike", "Hazard", [p1, p2, p3], center)
+        obstacle.color = color
         return obstacle
     
     @staticmethod
@@ -240,10 +274,10 @@ levels = [
         [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
         [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
         [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,2],
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
