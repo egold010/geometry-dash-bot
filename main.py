@@ -1,5 +1,5 @@
 import gymnasium as gym
-import GeometryDash
+import Env.GeometryDash as GeometryDash
 
 env = gym.make("GeometryDash-v0")
 observation, info = env.reset()
