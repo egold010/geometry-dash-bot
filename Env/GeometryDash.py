@@ -43,9 +43,7 @@ class GeometryDashEnv(gym.Env):
         self.window_size = size
         self.window = None
         self.clock = None
-        self.player = PlayerCube()
-        self.offset = 0
-
+        
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(32, 20))
 
@@ -57,28 +55,37 @@ class GeometryDashEnv(gym.Env):
             pygame.init()
             pygame.display.init()
             self.window = pygame.display.set_mode(SIZE)
-        if self.clock is None:
-            self.clock = pygame.time.Clock()
+
+        self.reset()
 
     def step(self, action):
-        self.render()
-        return self.grid, 0, False, False, {}
+        if action:
+            self.player.jump()
+        fail = self.render()
+        reward = -100 if fail else 1
+        return self.grid, reward, fail, {}
 
     def render(self) -> None:
         canvas = pygame.Surface((self.window_size[0], self.window_size[1]))
         canvas.fill((0,0,0))
         self.offset += self.player.x_velocity
 
+        self.drawMap(canvas)
         self.player.update(self.activeTerrain)
         self.player.render(canvas)
-        self.drawMap(canvas)
 
         self.window.blit(canvas, canvas.get_rect())
         pygame.event.pump()
         pygame.display.update()
         self.clock.tick(self.metadata["render_fps"])
+
+        return not self.player.alive
     
     def reset(self):
+        self.player = PlayerCube()
+        self.offset = 0
+        self.clock = pygame.time.Clock()
+
         return self.grid, {}
 
     def close(self) -> None:
@@ -108,8 +115,9 @@ class PlayerCube:
         self.Y = pos[1]
         self.size = size
         self.rotation = rotation
+        self.alive = True
 
-        self.x_velocity = 3
+        self.x_velocity = 8
         self.y_velocity = 0
         self.gravity = 1
         self.jump_strength = 15
@@ -139,8 +147,6 @@ class PlayerCube:
             self.Y += self.y_velocity
             self.rotation += 3
 
-        self.jump()
-
         self.on_ground = False
         for obstacle in terrain:
             r1 = self.PlayerSquare.get_rect()
@@ -154,7 +160,9 @@ class PlayerCube:
             elif obstacle.type == "Hazard":
                 for hb in obstacle.hitbox:
                     if r1.collidepoint(hb):
-                        pygame.quit()
+                        self.alive = False
+                        self.x_velocity = 0
+                        pyautogui.sleep(3)
                         break
 
 class Utilities:
