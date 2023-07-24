@@ -5,14 +5,18 @@ import math
 
 env = gym.make("GeometryDash-v0")
 model = sb3.PPO("MlpPolicy", env, verbose=1)
-#model.learn(total_timesteps=10, log_interval=math.inf)
+model = model.learn(total_timesteps=20480)
+GeometryDash.do_render = True
+print("rendering")
+model = model.learn(total_timesteps=2048000)
 
 #model_name = "ppo-LunarLander-v2"
 #model.save(model_name)
 
-for _ in range(1000):
-    observation, info = env.reset(options={"Render": True})
-    action = model.predict(observation, deterministic=True)
+observation, info = env.reset(options={"Render": True})
+
+for _ in range(int(1e12)):
+    action = model.predict(observation, deterministic=False)
     observation, reward, terminated, truncated, info = env.step(action)
 
     if terminated:

@@ -20,8 +20,11 @@ PLAYER_COLOR = (255, 255, 255)
 obstacles = [
     "Player",
     "Ground",
-    "Spike"
+    "Spike",
+    "Half Spike"
 ]
+
+do_render = False
 
 class Obstacle:
     def __init__(self, name, type, geometry, center):
@@ -55,7 +58,6 @@ class GeometryDashEnv(gym.Env):
         self.window_size = size
         self.window = None
         self.clock = None
-        self.do_render = False
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(OBSERVATION_DIMENSION[0] * OBSERVATION_DIMENSION[1],))
@@ -70,13 +72,16 @@ class GeometryDashEnv(gym.Env):
         self.player.update(self.activeTerrain)
         fail = not self.player.alive
 
-        if self.do_render:
+        if do_render:
             self.render()
 
         reward = -100 if fail else 1
         if self.player.on_ground:
-            reward += 100
-        return self.getGrid(), reward, fail, False, {}
+            reward += 1
+
+        self.offset += self.player.x_velocity
+
+        return self.getGrid(), reward, fail, self.player.Y > SIZE[1] * .75, {}
 
     def render(self) -> None:
         if self.window is None:
@@ -86,7 +91,6 @@ class GeometryDashEnv(gym.Env):
 
         canvas = pygame.Surface((self.window_size[0], self.window_size[1]))
         canvas.fill((0,0,0))
-        self.offset += self.player.x_velocity
 
         self.drawMap(canvas)
         self.player.render(canvas)
@@ -96,11 +100,10 @@ class GeometryDashEnv(gym.Env):
         pygame.display.update()
         self.clock.tick(self.metadata["render_fps"])
     
-    def reset(self, seed = None, options = {"Render": False}):
-        self.do_render = options["Render"]
+    def reset(self, seed = None, options = None):
+        if options is not None:
+            do_render = options["Render"]
 
-        if hasattr(self, "player"):
-            del self.player
         self.player = PlayerCube()
         self.offset = 0
         self.clock = pygame.time.Clock()
@@ -119,11 +122,11 @@ class GeometryDashEnv(gym.Env):
                 nx = x * GRID_SIZE - self.offset
                 ny = y * GRID_SIZE
                 obstacle = None
-                if cell == 1:
-                    obstacle = Utilities.getCube((nx,ny), GRID_SIZE, (100,100,100), 0)
-                elif cell == 2:
-                    obstacle = Utilities.getSpike((nx,ny), GRID_SIZE, (100,50,50))
-                if obstacle is not None:
+                if nx > 0 + GRID_SIZE and nx < SIZE[0] - GRID_SIZE and cell != 0:
+                    if cell == 1:
+                        obstacle = Utilities.getCube((nx,ny), GRID_SIZE, (100,100,100), 0)
+                    elif cell <= 3:
+                        obstacle = Utilities.getSpike((nx,ny), GRID_SIZE, (100,50,50), cell == 3)
                     self.activeTerrain.append(obstacle)
 
     def drawMap(self, window) -> None:
@@ -156,7 +159,7 @@ class PlayerCube:
         self.rotation = rotation
         self.alive = True
 
-        self.x_velocity = 8
+        self.x_velocity = 7
         self.y_velocity = 0
         self.gravity = 1
         self.jump_strength = 15
@@ -173,7 +176,7 @@ class PlayerCube:
         Utilities.drawRotatedSquare(window, (self.X, self.Y), self.size, self.rotation, PLAYER_COLOR)
 
     def jump(self) -> None:
-        if self.on_ground:  # To prevent double jumps
+        if self.on_ground and self.alive:
             self.y_velocity -= self.jump_strength
             self.on_ground = False
 
@@ -185,7 +188,6 @@ class PlayerCube:
             self.y_velocity += self.gravity
             self.Y += self.y_velocity
             self.rotation += 3
-        print(self.Y)
 
         self.on_ground = False
         for obstacle in terrain:
@@ -193,17 +195,21 @@ class PlayerCube:
             r1.center = (self.X, self.Y)
             if obstacle.type == "Ground":
                 if r1.colliderect(obstacle.hitbox):
-                    self.y_velocity = 0
-                    self.on_ground = True
-                    self.Y = obstacle.hitbox.top - self.size / 2
-                    break
+                    if r1.bottom <= obstacle.hitbox.top + self.y_velocity: #buffer
+                        self.y_velocity = 0
+                        self.on_ground = True
+                        self.Y = obstacle.hitbox.top - self.size / 2
+                        break
+                    else:
+                        self.alive = False
+                        self.x_velocity = 0
+                        break
             elif obstacle.type == "Hazard":
                 for hb in obstacle.hitbox:
                     if r1.collidepoint(hb):
                         self.alive = False
                         self.x_velocity = 0
                         break
-        print(self.Y)
 
 class Utilities:
     @staticmethod
@@ -215,10 +221,10 @@ class Utilities:
         return obstacle
 
     @staticmethod
-    def getSpike(center, size, color) -> None:
+    def getSpike(center, size, color, half = False):
         p1 = (center[0] - size / 2, center[1] + size / 2)
         p2 = (center[0] + size / 2, center[1] + size / 2)
-        p3 = (center[0], center[1] - size / 2)
+        p3 = center if half else (center[0], center[1] - size / 2)
         obstacle = Obstacle("Spike", "Hazard", [p1, p2, p3], center)
         obstacle.color = color
         return obstacle
@@ -263,26 +269,25 @@ class Utilities:
 
 levels = [
     [
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,2],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,3,2,0,0,0,0,0,0,0,0,0,0,2,2,1,3,3,3,1,3,3,3,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
     ],
 ]
