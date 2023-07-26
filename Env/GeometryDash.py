@@ -1,4 +1,4 @@
-import pygame, pyautogui, numpy as np, gymnasium as gym, math
+import pygame, pyautogui, numpy as np, gymnasium as gym, math, random
 from gymnasium.envs.registration import register
 
 register(
@@ -7,10 +7,10 @@ register(
 )
 
 RENDER_MODE = "human"
-SIZE = pyautogui.size()
+SIZE = (1440, 900)
 GRID_SIZE = SIZE[1] * .05
 
-OBSERVATION_CELL_SIZE = 10
+OBSERVATION_CELL_SIZE = 20#10
 OBSERVATION_DIMENSION = (round(SIZE[0]/OBSERVATION_CELL_SIZE), round(SIZE[1]/OBSERVATION_CELL_SIZE))
 
 PLAYER_GRID_POS = (4, 13)
@@ -24,32 +24,6 @@ obstacles = [
     "Half Spike"
 ]
 
-do_render = False
-
-class Obstacle:
-    def __init__(self, name, type, geometry, center):
-        self.name = name
-        self.geometry = geometry
-        self.type = type
-
-        if type == "Ground":
-            self.hitbox = geometry.get_rect()
-            self.hitbox.center = center
-        elif type == "Hazard":
-            self.hitbox = [
-                Utilities.getPointAverage(geometry[0], geometry[2]),
-                Utilities.getPointAverage(geometry[1], geometry[2]),
-                geometry[2]
-            ]
-
-    def draw(self, canvas):
-        if self.type == "Ground":
-            rect = self.geometry.get_rect()
-            rect.center = self.hitbox.center
-            canvas.blit(self.geometry, rect)
-        elif self.type == "Hazard":
-            pygame.draw.polygon(canvas, self.color, self.geometry)
-
 class GeometryDashEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 60}
     activeTerrain = []
@@ -58,6 +32,8 @@ class GeometryDashEnv(gym.Env):
         self.window_size = size
         self.window = None
         self.clock = None
+        self.total_reward = 0
+        self.done = False
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(OBSERVATION_DIMENSION[0] * OBSERVATION_DIMENSION[1],))
@@ -69,19 +45,23 @@ class GeometryDashEnv(gym.Env):
             self.player.jump()
         
         self.setMap()
-        self.player.update(self.activeTerrain)
+        grid = self.getGrid()
+        dodgeSpike = self.player.update(grid)
         fail = not self.player.alive
 
-        if do_render:
-            self.render()
-
-        reward = -100 if fail else 1
-        if self.player.on_ground:
-            reward += 1
+        reward = 0 #-1000 if fail else 1
+        if dodgeSpike:
+            reward += 5
+        """if fail:
+            reward -= 200"""
+        if action:
+            reward -= 1
 
         self.offset += self.player.x_velocity
+        self.total_reward += reward
+        self.done = fail
 
-        return self.getGrid(), reward, fail, self.player.Y > SIZE[1] * .75, {}
+        return grid, reward, fail, self.player.Y > SIZE[1] * .75, {}
 
     def render(self) -> None:
         if self.window is None:
@@ -108,6 +88,18 @@ class GeometryDashEnv(gym.Env):
         self.offset = 0
         self.clock = pygame.time.Clock()
 
+        #TEMP
+        print("Reward:", self.total_reward)
+        eff_row = 13
+        col = random.randint(10, len(levels[0][eff_row]) - 1)
+        col2 = col
+        while abs(col2 - col) < 4:
+            col2 = random.randint(10, len(levels[0][eff_row]) - 1)
+
+        for i in range(len(levels[0][eff_row])):
+            levels[0][eff_row][i] = 2 if i == col or i == col2 else 0
+
+        self.total_reward = 0
         return self.getGrid(), {}
 
     def close(self) -> None:
@@ -122,7 +114,7 @@ class GeometryDashEnv(gym.Env):
                 nx = x * GRID_SIZE - self.offset
                 ny = y * GRID_SIZE
                 obstacle = None
-                if nx > 0 + GRID_SIZE and nx < SIZE[0] - GRID_SIZE and cell != 0:
+                if nx > 0 - GRID_SIZE and nx < SIZE[0] + GRID_SIZE and cell != 0:
                     if cell == 1:
                         obstacle = Utilities.getCube((nx,ny), GRID_SIZE, (100,100,100), 0)
                     elif cell <= 3:
@@ -142,13 +134,12 @@ class GeometryDashEnv(gym.Env):
                     continue
                 grid[round(obstacle.hitbox.left/f):round(obstacle.hitbox.right/f), round(obstacle.hitbox.top/f):round(obstacle.hitbox.bottom/f)] = 1
             elif obstacle.type == "Hazard":
-                for hb in obstacle.hitbox:
-                    if round(hb[0]/f) < 0 or round(hb[0]/f) >= round(SIZE[0]/f) or round(hb[1]/f) < 0 or round(hb[1]/f) >= round(SIZE[1]/f):
-                        continue
-                    grid[round(hb[0]/f), round(hb[1]/f)] = 2
+                if round(obstacle.center[0]/f) < 0 or round(obstacle.center[0]/f) >= round(SIZE[0]/f):
+                    continue
+                grid[round(obstacle.center[0]/f), round(obstacle.center[1]/f)] = 2
         
         grid[round(self.player.X/f), round(self.player.Y/f)] = 3
-        
+        #Utilities.printGrid(grid)
         return np.array(grid, dtype=np.float32).flatten()
 
 class PlayerCube:
@@ -189,13 +180,15 @@ class PlayerCube:
             self.Y += self.y_velocity
             self.rotation += 3
 
+        dodgeSpike = False
+
         self.on_ground = False
         for obstacle in terrain:
             r1 = self.PlayerSquare.get_rect()
             r1.center = (self.X, self.Y)
             if obstacle.type == "Ground":
                 if r1.colliderect(obstacle.hitbox):
-                    if r1.bottom <= obstacle.hitbox.top + self.y_velocity: #buffer
+                    if r1.bottom <= obstacle.hitbox.top + 1 + self.y_velocity: #buffer
                         self.y_velocity = 0
                         self.on_ground = True
                         self.Y = obstacle.hitbox.top - self.size / 2
@@ -210,6 +203,36 @@ class PlayerCube:
                         self.alive = False
                         self.x_velocity = 0
                         break
+                if self.Y < obstacle.hitbox[2][1] and abs(self.X - obstacle.hitbox[2][0]) < self.size / 2:
+                    dodgeSpike = True
+        
+        return dodgeSpike
+
+
+class Obstacle:
+    def __init__(self, name, type, geometry, center):
+        self.name = name
+        self.geometry = geometry
+        self.type = type
+        self.center = center
+
+        if type == "Ground":
+            self.hitbox = geometry.get_rect()
+            self.hitbox.center = center
+        elif type == "Hazard":
+            self.hitbox = [
+                Utilities.getPointAverage(geometry[0], geometry[2]),
+                Utilities.getPointAverage(geometry[1], geometry[2]),
+                (geometry[2][0], geometry[2][1] - 10)
+            ]
+
+    def draw(self, canvas):
+        if self.type == "Ground":
+            rect = self.geometry.get_rect()
+            rect.center = self.hitbox.center
+            canvas.blit(self.geometry, rect)
+        elif self.type == "Hazard":
+            pygame.draw.polygon(canvas, self.color, self.geometry)
 
 class Utilities:
     @staticmethod
@@ -263,11 +286,16 @@ class Utilities:
     @staticmethod
     def getPointAverage(p1, p2):
         return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
+    
+    @staticmethod
+    def printGrid(grid):
+        print("Grid:")
+        for row in grid:
+            for cell in row:
+                print(int(cell), end=",")
+            print("")
 
-"""game is a grid with height 20"""
-"""player is at height 13"""
-
-levels = [
+"""levels = [
     [
         [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
         [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
@@ -289,5 +317,30 @@ levels = [
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ],
+]"""
+
+levels = [
+    [
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
+        [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,],
     ],
 ]
