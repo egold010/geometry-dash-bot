@@ -45,8 +45,7 @@ class GeometryDashEnv(gym.Env):
             self.player.jump()
         
         self.setMap()
-        grid = self.getGrid()
-        dodgeSpike = self.player.update(grid)
+        dodgeSpike = self.player.update(self.activeTerrain)
         fail = not self.player.alive
 
         reward = 0 #-1000 if fail else 1
@@ -61,7 +60,7 @@ class GeometryDashEnv(gym.Env):
         self.total_reward += reward
         self.done = fail
 
-        return grid, reward, fail, self.player.Y > SIZE[1] * .75, {}
+        return self.getGrid(), reward, fail, self.player.Y > SIZE[1] * .75, {}
 
     def render(self) -> None:
         if self.window is None:
