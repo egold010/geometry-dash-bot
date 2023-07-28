@@ -32,11 +32,11 @@ model = sb3.PPO(
     gae_lambda=0.95,
     ent_coef=0.01,
     verbose=1,
-    tensorboard_log="./tensorboard_logs"
+    #tensorboard_log="./tensorboard_logs"
 )
 
 if TRAIN:
-    model.learn(total_timesteps=6000000, progress_bar=True)
+    model.learn(total_timesteps=8000000, progress_bar=True)
     model.save("Models/GeometryDash-v0")
 else:
     del model
