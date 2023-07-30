@@ -25,6 +25,12 @@ obstacles = [
     "Player",
     "Reward"
 ]
+modes = [
+    "Ground",
+    "Ship"
+]
+
+Manual = False
 
 class GeometryDashEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 60}
@@ -44,8 +50,10 @@ class GeometryDashEnv(gym.Env):
         self.reset()
 
     def step(self, action):
-        if action:
-            self.player.jump()
+        if Manual:
+            action = pygame.mouse.get_pressed()[0]
+
+        self.player.action(action)
         
         self.setMap()
         grid, grid2d = self.getGrid()
@@ -161,6 +169,9 @@ class GeometryDashEnv(gym.Env):
         return np.array(grid, dtype=np.float32).flatten(), grid2d
 
 class PlayerCube:
+    ground_gravity = 1
+    ship_gravity = .5
+
     def __init__(self, pos = PLAYER_POS, size = GRID_SIZE, rotation = 0):
         self.X = pos[0]
         self.Y = pos[1]
@@ -168,6 +179,7 @@ class PlayerCube:
         self.rotation = rotation
         self.alive = True
 
+        self.mode = "Ship"
         self.x_velocity = 7
         self.y_velocity = 0
         self.gravity = 1
@@ -184,22 +196,30 @@ class PlayerCube:
         window.blit(square, rect)""" #potentially works with image instead of surface
         Utilities.drawRotatedSquare(window, (self.X, self.Y), self.size, self.rotation, PLAYER_COLOR)
 
-    def jump(self) -> None:
-        if self.on_ground and self.alive:
-            self.y_velocity -= self.jump_strength
-            self.on_ground = False
+    def action(self, value) -> None:
+        if self.alive:
+            if self.mode == "Ground":
+                if self.on_ground and value:
+                    self.y_velocity -= self.jump_strength
+                    self.on_ground = False
+            if self.mode == "Ship":
+                self.gravity = -self.ship_gravity if value else self.ship_gravity
+            
 
     def update(self, terrain) -> None:
-        if self.on_ground:
-            self.y_velocity = 0
-            self.rotation = Utilities.roundToNearest(self.rotation, 90)
-        else:
+        if self.mode == "Ground":
+            self.gravity = self.ground_gravity
+            if self.on_ground:
+                self.y_velocity = 0
+                self.rotation = Utilities.roundToNearest(self.rotation, 90)
+            else:
+                self.y_velocity += self.gravity
+                self.Y += self.y_velocity
+                self.rotation += 3
+        elif self.mode == "Ship":
             self.y_velocity += self.gravity
-            self.Y += self.y_velocity
-            self.rotation += 3
 
         bonus = False
-
         self.on_ground = False
 
         r1 = self.PlayerSquare.get_rect()
