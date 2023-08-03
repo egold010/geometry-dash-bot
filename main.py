@@ -18,6 +18,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 #region Environment
 TRAIN = False
+GeometryDash.Manual = True
 #try:
 env = DummyVecEnv([lambda: gym.make("GeometryDash-v0") for _ in range(8)])
 #env = Monitor(gym.make("GeometryDash-v0"), "./GD_logs")
