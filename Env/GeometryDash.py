@@ -36,7 +36,7 @@ class GeometryDashEnv(gym.Env):
         self.clock = None
         self.total_reward = 0
         self.done = False
-        self.level = levels[0]
+        self.level = self.generate_level(random.randint(50,70), 20)
         
         self.action_space = gym.spaces.Discrete(2)
         self.observation_space = gym.spaces.Box(low=0, high=len(obstacles), shape=(OBSERVATION_DIMENSION[0] * OBSERVATION_DIMENSION[1],))
@@ -105,7 +105,7 @@ class GeometryDashEnv(gym.Env):
 
         for i in range(len(self.level[eff_row])):
             self.level[eff_row][i] = 2 if i == col or i == col2 else 0"""
-        self.level = levels[random.randint(0, len(levels) - 1)]
+        self.level = self.generate_level(60, 20)
 
         self.total_reward = 0
         grid, grid2d = self.getGrid()
@@ -159,6 +159,67 @@ class GeometryDashEnv(gym.Env):
         grid[round(self.player.X/f), round(self.player.Y/f)] = 4
         #Utilities.printGrid(grid)
         return np.array(grid, dtype=np.float32).flatten(), grid2d
+    
+    def generate_level(self, width, height):
+        level = [[0]*width for _ in range(height)]
+        for i in range(height-6, height):
+            for j in range(width):
+                level[i][j] = 1
+        
+        position = 15
+        h = height-6
+        prev = 0
+        while position < width:
+            choice = random.randint(0, 2)
+            if choice == 1:  # If a block is chosen
+                block_len = random.randint(2, 3)  # Randomly determine the block's length
+                dh = random.randint(-1, 0 if prev == 0 else 1)
+                if dh == -1:
+                    block_len += 1
+                elif dh == 1:
+                    block_len += 3
+                    if prev == 0:
+                        position -= 1
+                h = max(4, min(height-6, h - dh))
+                end = min(position + block_len, width)  # Determine the end of the block, taking into account the level length
+                for i in range(position, end):
+                    level[h][i] = 1  # Add the block to the level at the current position
+                position = end  # Update the position to be after the block
+
+            elif choice == 2:  # If a spike is chosen
+                if position < width - 4:
+                    level[h][position] = 1  # Add a block to the level at the end of the spike
+                    level[h][position + 1] = 1  # Add a block to the level at the end of the spike
+                    level[h][position + 2] = 1  # Add a block to the level at the end of the spike
+                position += 3
+                spike_len = random.randint(1, 3)  # Randomly determine the spike's length
+                end = min(position + spike_len, width)  # Determine the end of the spike, taking into account the level length
+                for i in range(position, end):
+                    level[h-1][i] = 2  # Add the spike to the level at the current position
+                    level[h][i] = 1  # Add a block to the level at the current position
+                if position < width - spike_len - 3:
+                    level[h][position + spike_len] = 1  # Add a block to the level at the end of the spike
+                    level[h][position + spike_len + 1] = 1  # Add a block to the level at the end of the spike
+                    level[h][position + spike_len + 2] = 1  # Add a block to the level at the end of the spike
+                position = end + 3  # Update the position to be after the spike
+
+            elif prev != 0:  # If an empty space is chosen
+                gap_len = random.randint(2, 3)  # Randomly determine the space's length
+                dh = random.randint(-1, 1)
+                h = max(4, min(height-6, h - dh))
+                if dh == 1:
+                    gap_len -= 1
+                end = min(position + gap_len, width)  # Determine the end of the space, taking into account the level length
+                for i in range(position, end):
+                    level[h][i] = 3  # Add the spike to the level at the current position
+                    level[h+1][i] = 1  # Add a block to the level at the current position
+                if position < width - gap_len - 2:
+                    level[h][position + gap_len] = 1  # Add a block to the level at the end of the space
+                    level[h][position + gap_len + 1] = 1  # Add a block to the level at the end of the space
+                position += gap_len + 1  # Update the position to be after the space
+            prev = choice
+        
+        return level
 
 class PlayerCube:
     def __init__(self, pos = PLAYER_POS, size = GRID_SIZE, rotation = 0):

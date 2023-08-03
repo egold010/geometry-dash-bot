@@ -36,7 +36,7 @@ model = sb3.PPO(
 )
 
 if TRAIN:
-    model.learn(total_timesteps=8000000, progress_bar=True)
+    model.learn(total_timesteps=10000000, progress_bar=True)
     model.save("Models/GeometryDash-v0")
 else:
     del model
