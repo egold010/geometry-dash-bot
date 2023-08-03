@@ -50,7 +50,7 @@ class GeometryDashEnv(gym.Env):
         self.reset()
 
     def step(self, action):
-        if Manual:
+        if Manual and pygame.display.get_init():
             action = pygame.mouse.get_pressed()[0]
 
         self.player.action(action)
@@ -240,7 +240,7 @@ class PlayerCube:
         self.rotation = rotation
         self.alive = True
 
-        self.mode = "Ship"
+        self.mode = "Ground"
         self.x_velocity = 7
         self.y_velocity = 0
         self.gravity = 1
